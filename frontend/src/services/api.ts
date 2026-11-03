@@ -5,7 +5,8 @@ export interface LogAcesso {
   data_hora: string;
   usuario_id: number | null;
   usuario_nome: string | null;
-  status: "authorized" | "denied" | "revoked" | "no_face_detected" | string;
+  /** "authorized" | "denied" | "revoked" | "no_face_detected" | "error" */
+  status: string;
   confianca: number;
   distancia_lbph: number | null;
   foto_path: string | null;
@@ -59,122 +60,104 @@ export interface StatusSistema {
   };
 }
 
+export interface FiltrosLogs {
+  usuario?: string;
+  status?: string;
+  data_inicio?: string;
+  data_fim?: string;
+  /** Só registros diferentes de "authorized". */
+  excecoes?: boolean;
+  limite?: number;
+  offset?: number;
+}
+
+export interface InfoCamera {
+  conectado: boolean;
+  url: string | null;
+  fps: number;
+  ultimo_frame_ts: string | null;
+}
+
+/** Chama a API e converte respostas de erro em exceção com `mensagemErro`. */
+async function requisitar<T>(caminho: string, mensagemErro: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${caminho}`, init);
+  if (!res.ok) throw new Error(mensagemErro);
+  return res.json();
+}
+
+function enviarJson(metodo: string, corpo?: unknown): RequestInit {
+  if (corpo === undefined) return { method: metodo };
+  return { method: metodo, headers: { "Content-Type": "application/json" }, body: JSON.stringify(corpo) };
+}
+
+export function montarQueryLogs(filtros: FiltrosLogs = {}): string {
+  const query = new URLSearchParams();
+  if (filtros.usuario) query.append("usuario", filtros.usuario);
+  if (filtros.status) query.append("status", filtros.status);
+  if (filtros.data_inicio) query.append("data_inicio", filtros.data_inicio);
+  if (filtros.data_fim) query.append("data_fim", filtros.data_fim);
+  if (filtros.excecoes) query.append("excecoes", "true");
+  if (filtros.limite) query.append("limite", String(filtros.limite));
+  if (filtros.offset) query.append("offset", String(filtros.offset));
+  return query.toString();
+}
+
 export const api = {
-  async getStatus(): Promise<StatusSistema> {
-    const res = await fetch(`${API_BASE_URL}/api/status`);
-    if (!res.ok) throw new Error("Falha ao obter status do sistema");
-    return res.json();
-  },
+  getStatus: () => requisitar<StatusSistema>("/api/status", "Falha ao obter status do sistema"),
 
-  async getLogs(params?: {
-    usuario?: string;
-    status?: string;
-    data_inicio?: string;
-    data_fim?: string;
-    limite?: number;
-  }): Promise<LogAcesso[]> {
-    const query = new URLSearchParams();
-    if (params?.usuario) query.append("usuario", params.usuario);
-    if (params?.status) query.append("status", params.status);
-    if (params?.data_inicio) query.append("data_inicio", params.data_inicio);
-    if (params?.data_fim) query.append("data_fim", params.data_fim);
-    if (params?.limite) query.append("limite", String(params.limite));
+  getLogs: (filtros?: FiltrosLogs) =>
+    requisitar<LogAcesso[]>(`/api/logs?${montarQueryLogs(filtros)}`, "Falha ao obter logs"),
 
-    const res = await fetch(`${API_BASE_URL}/api/logs?${query.toString()}`);
-    if (!res.ok) throw new Error("Falha ao obter logs");
-    return res.json();
-  },
+  getLogsRecentes: (limite = 15) =>
+    requisitar<LogAcesso[]>(`/api/logs/recentes?limite=${limite}`, "Falha ao obter logs recentes"),
 
-  async getLogsRecentes(limite = 15): Promise<LogAcesso[]> {
-    const res = await fetch(`${API_BASE_URL}/api/logs/recentes?limite=${limite}`);
-    if (!res.ok) throw new Error("Falha ao obter logs recentes");
-    return res.json();
-  },
+  getExcecoes: (limite = 15) =>
+    requisitar<LogAcesso[]>(`/api/logs/excecoes?limite=${limite}`, "Falha ao obter exceções"),
 
-  async getExcecoes(limite = 15): Promise<LogAcesso[]> {
-    const res = await fetch(`${API_BASE_URL}/api/logs/excecoes?limite=${limite}`);
-    if (!res.ok) throw new Error("Falha ao obter exceções");
-    return res.json();
-  },
+  getUsuarios: () => requisitar<Usuario[]>("/api/usuarios", "Falha ao obter usuários"),
 
-  async getUsuarios(): Promise<Usuario[]> {
-    const res = await fetch(`${API_BASE_URL}/api/usuarios`);
-    if (!res.ok) throw new Error("Falha ao obter usuários");
-    return res.json();
-  },
+  updateUsuarioStatus: (usuarioId: number, status: "ativo" | "revogado") =>
+    requisitar<{ sucesso: boolean }>(
+      `/api/usuarios/${usuarioId}/status`,
+      "Falha ao atualizar status",
+      enviarJson("PATCH", { status }),
+    ),
 
-  async updateUsuarioStatus(usuarioId: number, status: "ativo" | "revogado"): Promise<{ sucesso: boolean }> {
-    const res = await fetch(`${API_BASE_URL}/api/usuarios/${usuarioId}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    if (!res.ok) throw new Error("Falha ao atualizar status");
-    return res.json();
-  },
+  getCapturasDesconhecidas: () =>
+    requisitar<CapturaDesconhecida[]>("/api/capturas-desconhecidas", "Falha ao obter capturas"),
 
-  async getCapturasDesconhecidas(): Promise<CapturaDesconhecida[]> {
-    const res = await fetch(`${API_BASE_URL}/api/capturas-desconhecidas`);
-    if (!res.ok) throw new Error("Falha ao obter capturas");
-    return res.json();
-  },
+  vincularCaptura: (capturaId: number, nomePessoa: string) =>
+    requisitar<{ sucesso: boolean; mensagem: string }>(
+      "/api/vincular-captura",
+      "Falha ao vincular captura",
+      enviarJson("POST", { captura_id: capturaId, nome_pessoa: nomePessoa }),
+    ),
 
-  async vincularCaptura(capturaId: number, nomePessoa: string): Promise<{ sucesso: boolean; mensagem: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/vincular-captura`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ captura_id: capturaId, nome_pessoa: nomePessoa }),
-    });
-    if (!res.ok) throw new Error("Falha ao vincular captura");
-    return res.json();
-  },
+  treinarModelo: () =>
+    requisitar<{ sucesso: boolean; mensagem: string }>("/api/treinar", "Falha ao disparar treino", enviarJson("POST")),
 
-  async treinarModelo(): Promise<{ sucesso: boolean; mensagem: string }> {
-    const res = await fetch(`${API_BASE_URL}/api/treinar`, {
-      method: "POST",
-    });
-    if (!res.ok) throw new Error("Falha ao disparar treino");
-    return res.json();
-  },
+  getEstatisticas: () => requisitar<Estatisticas>("/api/estatisticas", "Falha ao obter estatísticas"),
 
-  async getEstatisticas(): Promise<Estatisticas> {
-    const res = await fetch(`${API_BASE_URL}/api/estatisticas`);
-    if (!res.ok) throw new Error("Falha ao obter estatísticas");
-    return res.json();
-  },
+  simularLeitura: (tipo: "autorizado" | "negado" | "revogado", nome = "Marina Costa") =>
+    requisitar<{ sucesso: boolean }>(
+      "/api/simular-leitura",
+      "Falha ao simular leitura",
+      enviarJson("POST", { tipo, nome }),
+    ),
 
-  async simularLeitura(tipo: "autorizado" | "negado" | "revogado", nome = "Marina Costa"): Promise<{ sucesso: boolean }> {
-    const res = await fetch(`${API_BASE_URL}/api/simular-leitura`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tipo, nome }),
-    });
-    if (!res.ok) throw new Error("Falha ao simular leitura");
-    return res.json();
-  },
+  conectarCamera: (url: string) =>
+    requisitar<{ sucesso: boolean; status: InfoCamera }>(
+      "/api/camera/conectar",
+      "Falha ao conectar câmera",
+      enviarJson("POST", { url }),
+    ),
 
-  async conectarCamera(url: string): Promise<{ sucesso: boolean; status: { conectado: boolean; url: string; fps: number } }> {
-    const res = await fetch(`${API_BASE_URL}/api/camera/conectar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    if (!res.ok) throw new Error("Falha ao conectar câmera");
-    return res.json();
-  },
+  desconectarCamera: () =>
+    requisitar<{ sucesso: boolean; status: InfoCamera }>(
+      "/api/camera/desconectar",
+      "Falha ao desconectar câmera",
+      enviarJson("POST"),
+    ),
 
-  async desconectarCamera(): Promise<{ sucesso: boolean; status: { conectado: boolean } }> {
-    const res = await fetch(`${API_BASE_URL}/api/camera/desconectar`, {
-      method: "POST",
-    });
-    if (!res.ok) throw new Error("Falha ao desconectar câmera");
-    return res.json();
-  },
-
-  async getCameraInfo(): Promise<{ conectado: boolean; url: string | null; fps: number; ultimo_frame_ts: string | null }> {
-    const res = await fetch(`${API_BASE_URL}/api/camera/info`);
-    if (!res.ok) throw new Error("Falha ao obter info da câmera");
-    return res.json();
-  },
+  getCameraInfo: () => requisitar<InfoCamera>("/api/camera/info", "Falha ao obter info da câmera"),
 };
-

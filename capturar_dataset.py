@@ -1,12 +1,17 @@
+import argparse
+import contextlib
+import logging
 import os
 import sys
 import time
-import argparse
-import logging
+from collections import deque
 
 import cv2
 import numpy as np
 import requests
+
+from reconhecimento.pessoas import slug_pessoa
+from reconhecimento.video.mjpeg import ExtratorMJPEG
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR = os.path.join(BASE_DIR, "dataset")   
@@ -26,7 +31,8 @@ logger = logging.getLogger("captura_dataset")
 class FonteESP32Cam:
     def __init__(self, url: str, timeout: int = 10):
         self.url = url
-        self._buffer = b""
+        self._extrator = ExtratorMJPEG()
+        self._prontos: deque[bytes] = deque()
         try:
             self._resposta = requests.get(url, stream=True, timeout=timeout)
         except requests.exceptions.RequestException as e:
@@ -55,33 +61,21 @@ class FonteESP32Cam:
         """Retorna (True, frame_bgr) ou (False, None), no padrão do OpenCV."""
         try:
             while True:
-                inicio = self._buffer.find(b"\xff\xd8")  # marcador JPEG SOI (Start Of Image)
-                fim = self._buffer.find(b"\xff\xd9")     # marcador JPEG EOI (End Of Image)
-
-                if inicio != -1 and fim != -1 and fim > inicio:
-                    jpg_bytes = self._buffer[inicio:fim + 2]
-                    self._buffer = self._buffer[fim + 2:]
-                    frame = cv2.imdecode(np.frombuffer(jpg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+                while self._prontos:
+                    frame = cv2.imdecode(np.frombuffer(self._prontos.popleft(), dtype=np.uint8), cv2.IMREAD_COLOR)
                     if frame is not None:
                         return True, frame
-                    continue  
 
                 pedaco = next(self._iterador, None)
                 if pedaco is None:
                     return False, None
-                self._buffer += pedaco
-
-                if len(self._buffer) > 2_000_000:
-                    logger.warning("Buffer do stream cresceu demais - descartando dados antigos.")
-                    self._buffer = self._buffer[-200_000:]
+                self._prontos.extend(self._extrator.alimentar(pedaco))
         except (requests.exceptions.RequestException, StopIteration):
             return False, None
 
     def release(self):
-        try:
+        with contextlib.suppress(Exception):
             self._resposta.close()
-        except Exception:
-            pass
 
 
 class FonteESP32CamPolling:
@@ -105,7 +99,7 @@ class FonteESP32CamPolling:
         if "image" not in content_type:
             raise ConnectionError(
                 f"A resposta de {self.capture_url} não é uma imagem (Content-Type recebido: "
-                f"'{content_type or 'nenhum'}'). Confira se o firmware 'esp32cam_modo_captura.ino' "
+                f"'{content_type or 'nenhum'}'). Confira se o firmware 'CameraWebServer.ino' "
                 f"está rodando e se o endereço está correto."
             )
 
@@ -144,34 +138,23 @@ def abrir_fonte_video(indice_camera: int, esp32_url: str, esp32_usar_stream: boo
     """Abre a webcam local ou a câmera do ESP32-CAM, conforme os argumentos recebidos."""
     if esp32_url:
         base = _normalizar_url_base_esp32(esp32_url)
-
         if esp32_usar_stream:
-            url = base + "/stream"
-            logger.info("Conectando ao stream contínuo do ESP32-CAM em %s ...", url)
-            try:
-                fonte = FonteESP32Cam(url)
-            except ConnectionError as e:
-                logger.error("Falha ao conectar no ESP32-CAM: %s", e)
-                logger.error(
-                    "Verifique: (1) o firmware 'esp32cam_modo_captura.ino' está rodando; "
-                    "(2) o IP está correto (veja o Monitor Serial); "
-                    "(3) o computador está na mesma rede Wi-Fi do ESP32-CAM. "
-                    "Se o problema persistir, tente sem a flag --esp32-stream (modo por polling)."
-                )
-                sys.exit(1)
+            url, classe, modo = base + "/stream", FonteESP32Cam, "stream contínuo"
         else:
-            url = base + "/capture"
-            logger.info("Conectando ao ESP32-CAM (modo captura por polling) em %s ...", url)
-            try:
-                fonte = FonteESP32CamPolling(url)
-            except ConnectionError as e:
-                logger.error("Falha ao conectar no ESP32-CAM: %s", e)
-                logger.error(
-                    "Verifique: (1) o firmware 'esp32cam_modo_captura.ino' está rodando; "
-                    "(2) o IP está correto (veja o Monitor Serial); "
-                    "(3) o computador está na mesma rede Wi-Fi do ESP32-CAM."
-                )
-                sys.exit(1)
+            url, classe, modo = base + "/capture", FonteESP32CamPolling, "captura por polling"
+
+        logger.info("Conectando ao ESP32-CAM (%s) em %s ...", modo, url)
+        try:
+            fonte = classe(url)
+        except ConnectionError as e:
+            logger.error("Falha ao conectar no ESP32-CAM: %s", e)
+            logger.error(
+                "Verifique: (1) o firmware 'CameraWebServer.ino' está rodando; "
+                "(2) o IP está correto (veja o Monitor Serial); "
+                "(3) o computador está na mesma rede Wi-Fi do ESP32-CAM."
+                + ("" if not esp32_usar_stream else " Se o problema persistir, tente sem a flag --esp32-stream.")
+            )
+            sys.exit(1)
 
         logger.info("Conectado ao ESP32-CAM com sucesso.")
         return fonte, False  # False = não espelhar (câmera fixa, não é "selfie")
@@ -182,11 +165,12 @@ def abrir_fonte_video(indice_camera: int, esp32_url: str, esp32_usar_stream: boo
         sys.exit(1)
     return fonte, True  # True = espelha, mais natural para quem está de frente pro notebook
 
+
 def melhorar_exibicao(frame_bgr):
     lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    canal_l, a, b = cv2.split(lab)
     clahe_cor = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l_realcado = clahe_cor.apply(l)
+    l_realcado = clahe_cor.apply(canal_l)
     lab_realcado = cv2.merge((l_realcado, a, b))
     realcado = cv2.cvtColor(lab_realcado, cv2.COLOR_LAB2BGR)
 
@@ -210,14 +194,6 @@ def expandir_caixa(caixa, largura_frame, altura_frame,
     return (novo_x, novo_y, novo_w, novo_h)
 
 
-def nome_para_pasta(nome: str) -> str:
-    """Normaliza o nome informado para um nome de pasta seguro."""
-    nome = nome.strip().lower()
-    nome = nome.replace(" ", "_")
-    nome = "".join(c for c in nome if c.isalnum() or c == "_")
-    return nome or "usuario"
-
-
 def proximo_indice_arquivo(pasta_pessoa: str) -> int:
     """Permite continuar uma coleta anterior sem sobrescrever fotos já salvas."""
     existentes = [f for f in os.listdir(pasta_pessoa) if f.startswith("foto_") and f.endswith(".jpg")]
@@ -232,7 +208,7 @@ def proximo_indice_arquivo(pasta_pessoa: str) -> int:
     return (max(indices) + 1) if indices else 1
 
 def capturar_dataset(nome_pessoa: str, meta_fotos: int, indice_camera: int, esp32_url: str = None, esp32_usar_stream: bool = False):
-    pasta_pessoa = os.path.join(DATASET_DIR, nome_para_pasta(nome_pessoa))
+    pasta_pessoa = os.path.join(DATASET_DIR, slug_pessoa(nome_pessoa))
     os.makedirs(pasta_pessoa, exist_ok=True)
 
     proximo_indice = proximo_indice_arquivo(pasta_pessoa)
@@ -314,7 +290,7 @@ def capturar_dataset(nome_pessoa: str, meta_fotos: int, indice_camera: int, esp3
                 else:
                     face_suavizada = tuple(
                         int(SUAVIZACAO_ALPHA * novo + (1 - SUAVIZACAO_ALPHA) * anterior)
-                        for novo, anterior in zip(nova_face, ultima_face_valida)
+                        for novo, anterior in zip(nova_face, ultima_face_valida, strict=True)
                     )
 
                 ultima_face_valida = face_suavizada
@@ -396,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--esp32-url", type=str, default=None,
         help="Endereço base do ESP32-CAM em modo captura, ex.: http://192.168.0.55 "
-             "(requer o firmware esp32cam_modo_captura.ino rodando no módulo). "
+             "(requer o firmware CameraWebServer.ino rodando no módulo). "
              "Não é necessário incluir /stream ou /capture - o script completa automaticamente.",
     )
     parser.add_argument(

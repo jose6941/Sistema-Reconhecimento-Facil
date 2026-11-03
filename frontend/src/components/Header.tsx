@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
-import { IconCpu, IconCamera, IconPlayerPlay, IconCheck, IconX, IconAlertTriangle } from "@tabler/icons-react";
-import { StatusSistema, api } from "@/services/api";
+import Link from "next/link";
+import { useState } from "react";
+import { IconAlertTriangle, IconBook, IconCheck, IconCpu, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { Modal } from "@/components/Modal";
+import { api, StatusSistema } from "@/services/api";
 
 interface HeaderProps {
   status: StatusSistema | null;
@@ -10,20 +12,60 @@ interface HeaderProps {
   onSimulado: () => void;
 }
 
+type TipoSimulado = "autorizado" | "negado" | "revogado";
+
+const OPCOES_SIMULACAO: {
+  tipo: TipoSimulado;
+  rotulo: string;
+  nomePadrao: string;
+  Icone: typeof IconCheck;
+  classeAtiva: string;
+}[] = [
+  {
+    tipo: "autorizado",
+    rotulo: "Autorizado",
+    nomePadrao: "Marina Costa",
+    Icone: IconCheck,
+    classeAtiva:
+      "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800",
+  },
+  {
+    tipo: "revogado",
+    rotulo: "Revogado",
+    nomePadrao: "Sérgio Baptista",
+    Icone: IconX,
+    classeAtiva: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-300 dark:border-rose-800",
+  },
+  {
+    tipo: "negado",
+    rotulo: "Desconhecido",
+    nomePadrao: "Desconhecido",
+    Icone: IconAlertTriangle,
+    classeAtiva:
+      "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800",
+  },
+];
+
+const BOTAO_CHIP =
+  "flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300";
+
 export function Header({ status, online, onSimulado }: HeaderProps) {
   const [modalSimular, setModalSimular] = useState(false);
   const [simulando, setSimulando] = useState(false);
   const [nomeSimulado, setNomeSimulado] = useState("Marina Costa");
-  const [tipoSimulado, setTipoSimulado] = useState<"autorizado" | "negado" | "revogado">("autorizado");
+  const [tipoSimulado, setTipoSimulado] = useState<TipoSimulado>("autorizado");
+  const [erro, setErro] = useState<string | null>(null);
 
   const executarSimulacao = async () => {
     setSimulando(true);
+    setErro(null);
     try {
       await api.simularLeitura(tipoSimulado, nomeSimulado);
       onSimulado();
       setModalSimular(false);
     } catch (e) {
       console.error("Erro ao simular:", e);
+      setErro("Não foi possível simular a leitura. Verifique o servidor.");
     } finally {
       setSimulando(false);
     }
@@ -47,25 +89,25 @@ export function Header({ status, online, onSimulado }: HeaderProps) {
         </div>
 
         <div className="flex items-center flex-wrap gap-2 text-xs">
-          {/* Status do Servidor */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300">
-            <span
-              className={`w-2 h-2 rounded-full ${online ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`}
-            />
+          <div className={BOTAO_CHIP}>
+            <span className={`w-2 h-2 rounded-full ${online ? "bg-emerald-500 animate-pulse" : "bg-rose-500"}`} />
             <span>{online ? "Servidor Ativo" : "Desconectado"}</span>
           </div>
 
-          {/* Status do Modelo LBPH */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300">
+          <div className={BOTAO_CHIP}>
             <IconCpu size={14} className="text-neutral-500" />
-            <span>
-              {status?.modelo_carregado
-                ? `LBPH: ${status.total_identidades} pessoas`
-                : "Modelo não treinado"}
-            </span>
+            <span>{status?.modelo_carregado ? `LBPH: ${status.total_identidades} pessoas` : "Modelo não treinado"}</span>
           </div>
 
-          {/* Botão de Simulação (Ideal para apresentação de TCC) */}
+          <Link
+            href="/documentacao"
+            className={`${BOTAO_CHIP} hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-colors`}
+            title="Features, regras de negócio e requisitos do sistema"
+          >
+            <IconBook size={14} className="text-neutral-500" />
+            <span>Documentação</span>
+          </Link>
+
           <button
             onClick={() => setModalSimular(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-neutral-900 hover:bg-neutral-800 dark:bg-neutral-100 dark:hover:bg-neutral-200 text-white dark:text-neutral-900 font-medium transition-all"
@@ -77,84 +119,13 @@ export function Header({ status, online, onSimulado }: HeaderProps) {
         </div>
       </header>
 
-      {/* Modal de Simulação para Demonstração */}
       {modalSimular && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 max-w-sm w-full p-5 shadow-xl">
-            <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
-              Simular Leitura da Portaria
-            </h3>
-            <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
-              Dispare um evento em tempo real para demonstrar o comportamento do sistema sem precisar do ESP32-CAM.
-            </p>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                  Tipo de Resultado
-                </label>
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipoSimulado("autorizado");
-                      setNomeSimulado("Marina Costa");
-                    }}
-                    className={`py-1.5 text-xs font-medium rounded-md border flex items-center justify-center gap-1 ${
-                      tipoSimulado === "autorizado"
-                        ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800"
-                        : "border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400"
-                    }`}
-                  >
-                    <IconCheck size={12} /> Autorizado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipoSimulado("revogado");
-                      setNomeSimulado("Sérgio Baptista");
-                    }}
-                    className={`py-1.5 text-xs font-medium rounded-md border flex items-center justify-center gap-1 ${
-                      tipoSimulado === "revogado"
-                        ? "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-300 dark:border-rose-800"
-                        : "border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400"
-                    }`}
-                  >
-                    <IconX size={12} /> Revogado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTipoSimulado("negado");
-                      setNomeSimulado("Desconhecido");
-                    }}
-                    className={`py-1.5 text-xs font-medium rounded-md border flex items-center justify-center gap-1 ${
-                      tipoSimulado === "negado"
-                        ? "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800"
-                        : "border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400"
-                    }`}
-                  >
-                    <IconAlertTriangle size={12} /> Desconhecido
-                  </button>
-                </div>
-              </div>
-
-              {tipoSimulado !== "negado" && (
-                <div>
-                  <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
-                    Nome da Pessoa
-                  </label>
-                  <input
-                    type="text"
-                    value={nomeSimulado}
-                    onChange={(e) => setNomeSimulado(e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 outline-none focus:ring-1 focus:ring-neutral-400"
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="flex justify-end gap-2 mt-5">
+        <Modal
+          titulo="Simular Leitura da Portaria"
+          descricao="Dispare um evento em tempo real para demonstrar o comportamento do sistema sem precisar do ESP32-CAM."
+          onFechar={() => setModalSimular(false)}
+          rodape={
+            <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setModalSimular(false)}
@@ -171,8 +142,54 @@ export function Header({ status, online, onSimulado }: HeaderProps) {
                 {simulando ? "Disparando..." : "Disparar Leitura"}
               </button>
             </div>
+          }
+        >
+          <div>
+            <span className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">Tipo de Resultado</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {OPCOES_SIMULACAO.map(({ tipo, rotulo, nomePadrao, Icone, classeAtiva }) => (
+                <button
+                  key={tipo}
+                  type="button"
+                  aria-pressed={tipoSimulado === tipo}
+                  onClick={() => {
+                    setTipoSimulado(tipo);
+                    setNomeSimulado(nomePadrao);
+                  }}
+                  className={`py-1.5 text-xs font-medium rounded-md border flex items-center justify-center gap-1 ${
+                    tipoSimulado === tipo
+                      ? classeAtiva
+                      : "border-neutral-200 dark:border-neutral-700 text-neutral-600 dark:text-neutral-400"
+                  }`}
+                >
+                  <Icone size={12} /> {rotulo}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+
+          {tipoSimulado !== "negado" && (
+            <div>
+              <label htmlFor="nome-simulado" className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                Nome da Pessoa
+              </label>
+              <input
+                id="nome-simulado"
+                type="text"
+                maxLength={100}
+                value={nomeSimulado}
+                onChange={(e) => setNomeSimulado(e.target.value)}
+                className="w-full text-xs px-2.5 py-1.5 rounded-md border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100 outline-none focus:ring-1 focus:ring-neutral-400"
+              />
+            </div>
+          )}
+
+          {erro && (
+            <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">
+              {erro}
+            </p>
+          )}
+        </Modal>
       )}
     </>
   );

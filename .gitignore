@@ -2,6 +2,8 @@
 # .gitignore - Sistema de Reconhecimento Facial / TCC
 # ==============================================================================
 
+resumo.md
+
 # --- Ambientes Virtuais Python ---
 venv/
 .venv/
@@ -32,6 +34,7 @@ wheels/
 .installed.cfg
 *.egg
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 

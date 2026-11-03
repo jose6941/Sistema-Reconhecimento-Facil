@@ -49,25 +49,39 @@ A solução divide-se em três camadas interdependentes:
 │   ├── CameraWebServer.ino      # Sketch principal com calibração do sensor OV2640
 │   ├── app_httpd.cpp            # Servidor HTTP embarcado (endpoints /stream e /capture)
 │   ├── board_config.h           # Seleção do modelo da placa de desenvolvimento
-│   └── camera_pins.h            # Mapeamento dos pinos GPIO da câmera
+│   ├── camera_pins.h            # Mapeamento dos pinos GPIO da câmera
+│   ├── gerar_secrets.py         # Gera o secrets.h (Wi-Fi) a partir do .env
+│   └── .env.example             # Credenciais Wi-Fi do firmware
+├── reconhecimento/              # Backend Python (pacote)
+│   ├── app.py                   # Fábrica da aplicação Flask (create_app)
+│   ├── config.py                # Configurações (.env) e caminhos
+│   ├── banco_dados.py           # Persistência SQLite e consultas
+│   ├── pessoas.py               # Normalização de nomes de pessoas/pastas
+│   ├── contexto.py              # Contêiner de serviços usado pelas rotas
+│   ├── api/                     # Rotas (blueprints) e validação de entrada
+│   ├── servicos/                # Regras de acesso, eventos SSE e estado
+│   ├── video/                   # Parser MJPEG e worker do stream do ESP32
+│   └── visao/                   # Pipeline OpenCV (Haar + LBPH) e treinamento
+├── tests/                       # Testes do backend (pytest)
 ├── dataset/                     # Diretórios com imagens de treino agrupadas por pessoa
 ├── docs/                        # Documentação técnica e diagramas do projeto
-│   └── arquitetura_fluxo_http.jpg # Diagrama visual de arquitetura e fluxo HTTP
-├── frontend/                    # Painel Web Administrativo (Next.js 16, React 19, Tailwind)
-│   ├── src/app/                 # Rotas e páginas (Ao Vivo, Pessoas, Histórico)
-│   ├── src/components/          # Componentes reativos do painel
-│   └── src/services/            # Clientes de comunicação com a API REST e SSE
+├── frontend/                    # Painel Web (Next.js 16, React 19, Tailwind) — ver frontend/README.md
+│   ├── src/app/                 # Rotas: painel (/) e documentação (/documentacao)
+│   ├── src/components/          # Telas e componentes reutilizáveis
+│   ├── src/lib/                 # Formatadores, status, debounce e leitura da documentação
+│   ├── src/services/            # Cliente tipado da API REST
+│   └── src/content/documentacao # Versões da documentação (V####_AAAA-MM-DD.md)
 ├── static/                      # Recursos estáticos servidos pelo backend
 │   ├── acessos/                 # Recortes faciais de acessos registrados
 │   └── desconhecidos/           # Capturas de tentativas não identificadas
-├── acessos.db                   # Banco de dados SQLite de auditoria e usuários
-├── banco_dados.py               # Camada de persistência e consultas analíticas
+├── servidor_reconhecimento.py   # Ponto de entrada do backend (argumentos --train, --esp32-url...)
 ├── capturar_dataset.py          # Utilitário CLI para captura e composição de dataset
-├── iniciar_sistema.bat          # Script de inicialização unificada (Windows)
-├── modelo_lbph.yml              # Modelo serializado do classificador treinado
-├── labels.json                  # Mapeamento dos identificadores de classe para nomes
-├── requirements.txt             # Dependências de pacotes Python
-└── servidor_reconhecimento.py   # Servidor central (Pipeline OpenCV + API Flask)
+├── iniciar_sistema.bat / .sh    # Inicialização unificada (Windows / Linux e macOS)
+├── .env.example                 # Configuração do backend (copie para .env)
+├── pyproject.toml               # Configuração do pytest e do ruff
+├── requirements.txt             # Dependências Python
+├── requirements-dev.txt         # Dependências de teste e lint
+└── acessos.db, modelo_lbph.yml, labels.json   # Gerados em tempo de execução (ignorados pelo Git)
 ```
 
 ---
@@ -76,7 +90,7 @@ A solução divide-se em três camadas interdependentes:
 
 * **Sistema Operacional**: Windows 10/11 ou Linux.
 * **Python**: Versão 3.10 ou superior.
-* **Node.js**: Versão 18.x ou superior (com gerenciador `npm`).
+* **Node.js**: Versão 20.x ou superior (com gerenciador `npm`).
 * **Arduino IDE**: Com suporte a placas ESP32 instalado (se for regravar o módulo físico).
 * **Hardware (Opcional)**: Módulo ESP32-CAM AI-Thinker alimentado a 5V/2A. Na ausência do hardware, o sistema conta com modo de **webcam USB** e **simulador acadêmico integrado**.
 
@@ -129,12 +143,32 @@ A solução divide-se em três camadas interdependentes:
 
 ## 6. Operação do Sistema
 
+### 6.0. Variáveis de Ambiente (`.env`)
+
+Cada etapa possui um `.env.example` versionado e um `.env` local (ignorado pelo Git):
+
+| Etapa | Arquivo | Principais variáveis |
+| :--- | :--- | :--- |
+| Backend | `.env` (raiz) | `FLASK_HOST`, `FLASK_PORT`, `CORS_ORIGINS`, `ESP32_URL`, `CAMERA_ID`, `LBPH_CONFIDENCE_THRESHOLD`, `DEBOUNCE_SECONDS`, `FRONTEND_PORT` |
+| Frontend | `frontend/.env` | `NEXT_PUBLIC_API_URL` (lida no build; reinicie após alterar) |
+| ESP32-CAM | `CameraWebServer/.env` | `WIFI_SSID`, `WIFI_PASSWORD` |
+
+Para criar os arquivos: `cp .env.example .env` (em cada pasta). No firmware, a Arduino IDE não lê `.env`; rode `python3 gerar_secrets.py` dentro de `CameraWebServer/` para gerar o `secrets.h` antes de gravar a placa.
+
 ### 6.1. Inicialização Integrada
 
-Execute o script unificado para subir ambos os serviços simultaneamente:
+**Windows:**
 ```bat
 .\iniciar_sistema.bat
 ```
+
+**Linux / macOS** (requer `python3` 3.10+, `node` 20+ e `npm`):
+```bash
+./iniciar_sistema.sh
+```
+O script cria os `.env` que faltarem, o `venv/`, instala as dependências do backend e do frontend, sobe os dois serviços e encerra ambos com `Ctrl+C`.
+
+A documentação das features, regras de negócio e requisitos fica em [http://localhost:3000/documentacao](http://localhost:3000/documentacao). Para registrar uma nova versão, rode `npm run doc:nova-versao` em `frontend/` e edite o arquivo criado em `frontend/src/content/documentacao/`.
 O script iniciará:
 - **Backend Flask & API**: [http://localhost:5000](http://localhost:5000)
 - **Painel Administrativo Web**: [http://localhost:3000](http://localhost:3000)
@@ -201,7 +235,7 @@ Para mitigar imprevistos de conectividade física ou ausência de iluminação a
 | `GET` | `/saude` | Verificação de disponibilidade e status do modelo |
 | `GET` | `/api/status` | Estado global da infraestrutura e métricas de conexão |
 | `GET` | `/api/eventos` | Stream de Server-Sent Events (SSE) para atualização em tempo real |
-| `GET` | `/api/logs` | Consulta ao histórico de auditoria com filtros |
+| `GET` | `/api/logs` | Histórico com filtros: `usuario`, `status`, `excecoes`, `data_inicio`, `data_fim`, `limite` (1–500) e `offset` |
 | `GET` | `/api/usuarios` | Listagem de usuários, fotos e status atual |
 | `PATCH`| `/api/usuarios/<id>/status`| Atualização de permissão (`ativo` / `revogado`) |
 | `POST` | `/api/treinar` | Aciona o treinamento em segundo plano |
@@ -211,7 +245,24 @@ Para mitigar imprevistos de conectividade física ou ausência de iluminação a
 
 ---
 
-## 9. Licença e Créditos
+## 9. Testes Automatizados
+
+**Backend** (`pytest`, a partir da raiz, com o ambiente virtual ativo):
+```bash
+pip install -r requirements-dev.txt
+pytest                      # todos os testes
+pytest --cov=reconhecimento # com cobertura
+ruff check .                # análise estática
+```
+Cobrem banco de dados (incluindo SQL injection), pipeline de reconhecimento, regras de acesso (revogação, *debounce*), treinamento, parser MJPEG, worker de stream e a API com foco em segurança (parâmetros inválidos, uploads malformados ou grandes, *path traversal*, URL da câmera, CORS e vazamento de erros). Duas falhas conhecidas (itens 6.1 do `resumo.md`) estão marcadas como `xfail`.
+
+**Frontend** (a partir de `frontend/`):
+```bash
+npm run test:run   # Vitest + Testing Library
+npm run lint && npm run typecheck
+```
+
+## 10. Licença e Créditos
 
 Trabalho desenvolvido no âmbito do Trabalho de Conclusão de Curso (TCC) do **IFSP Câmpus Birigui**.
 Uso destinado a fins acadêmicos, de pesquisa e controle de acesso biométrico de baixo custo.

@@ -8,10 +8,20 @@
 #include "board_config.h"
 
 // ===========================
-// Enter your WiFi credentials
+// WiFi credentials
 // ===========================
-const char *ssid = "**********";
-const char *password = "**********";
+// As credenciais vêm do arquivo secrets.h, gerado a partir do .env:
+//   cd CameraWebServer && python3 gerar_secrets.py
+// Sem o secrets.h, usa os placeholders abaixo (edite-os manualmente se preferir).
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#define WIFI_SSID "**********"
+#define WIFI_PASSWORD "**********"
+#endif
+
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASSWORD;
 
 void startCameraServer();
 void setupLedFlash();
